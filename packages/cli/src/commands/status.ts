@@ -1,13 +1,19 @@
-import { machineSummarySchema } from '@cybermind/shared/api';
+import { machineSummarySchema } from '@vibivibi/shared/api';
 import { ApiError, request } from '../api';
-import { configPath, keyPath, readConfig, readKeyPair } from '../config';
+import { configPath, readConfig, readUserKey, userKeyPath } from '../config';
 
 export async function status() {
   const config = readConfig();
-  const key = readKeyPair();
+  const key = readUserKey();
 
   console.log(`config : ${configPath()}${config ? '' : ' (not enrolled)'}`);
-  console.log(`key    : ${key ? `${keyPath()} (fingerprint ${key.fingerprint}, created ${key.createdAt})` : 'none'}`);
+  if (key) {
+    console.log(
+      `key    : ${userKeyPath()} (fingerprint ${key.fingerprint}, ${key.privateKey ? `private key kept on this machine since ${key.unlockedAt}` : 'public key only; the password is asked when needed'})`
+    );
+  } else {
+    console.log('key    : none on this machine');
+  }
   if (!config) return;
 
   console.log(`server : ${config.serverUrl}`);
@@ -18,10 +24,7 @@ export async function status() {
       token: config.deviceToken,
       schema: machineSummarySchema
     });
-    console.log(`remote : last seen ${remote.lastSeenAt ?? 'never'}, active key ${remote.activeKey?.fingerprint ?? 'none'}`);
-    if (remote.activeKey && key && remote.activeKey.fingerprint !== key.fingerprint) {
-      console.log('warning: the server holds a different public key than this machine. Run `cybermind rotate-key`.');
-    }
+    console.log(`remote : last activity ${remote.lastSeenAt ?? 'never'}`);
   } catch (error) {
     if (error instanceof ApiError) {
       console.log(`remote : ${error.status === 401 ? 'device token rejected (revoked?)' : error.message}`);

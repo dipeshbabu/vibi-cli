@@ -3,39 +3,37 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
-  renameSync,
   rmSync,
   writeFileSync
 } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
-import type { MachineKeyPair } from '@cybermind/shared/crypto';
 
 /**
  * Everything the client persists lives under one directory:
  *
- *   ~/.cybermind/
- *     config.json          server URL, machine id, device token   (0600)
- *     keys/machine.json    the active X25519 key pair             (0600)
- *     keys/archive/<fingerprint>.json   retired key pairs         (0600)
+ *   ~/.vibi/
+ *     config.json      server URL, machine id, device token        (0600)
+ *     keys/user.json   the user's public key, and the private key
+ *                      once unlocked with the encryption password  (0600)
+ *     state.json       per-session sync bookkeeping
  *
- * Retired private keys are kept because traces encrypted before a rotation
- * can only be decrypted with the key that was active at the time.
+ * The private key is only ever stored on the server wrapped with the
+ * encryption password; `vibi lock` removes the local plaintext copy.
  *
- * Override the location with CYBERMIND_HOME (used by tests).
+ * Override the location with VIBI_HOME (used by tests).
  */
 
 export const DEFAULT_SERVER_URL =
-  process.env.CYBERMIND_SERVER_URL ?? 'http://localhost:3000';
+  process.env.VIBI_SERVER_URL ?? 'http://localhost:3000';
 
 export function configDir(): string {
-  return process.env.CYBERMIND_HOME ?? join(homedir(), '.cybermind');
+  return process.env.VIBI_HOME ?? join(homedir(), '.vibi');
 }
 
 export const configPath = () => join(configDir(), 'config.json');
-export const keyPath = () => join(configDir(), 'keys', 'machine.json');
-export const keyArchiveDir = () => join(configDir(), 'keys', 'archive');
+export const userKeyPath = () => join(configDir(), 'keys', 'user.json');
 
 const configSchema = z.object({
   serverUrl: z.string().url(),
@@ -46,14 +44,15 @@ const configSchema = z.object({
 });
 export type Config = z.infer<typeof configSchema>;
 
-const storedKeySchema = z.object({
-  algorithm: z.literal('x25519'),
+const localUserKeySchema = z.object({
   publicKey: z.string(),
-  privateKey: z.string(),
   fingerprint: z.string(),
-  createdAt: z.string()
+  /** null while locked. */
+  privateKey: z.string().nullable(),
+  createdAt: z.string(),
+  unlockedAt: z.string().nullable()
 });
-export type StoredKeyPair = z.infer<typeof storedKeySchema>;
+export type LocalUserKey = z.infer<typeof localUserKeySchema>;
 
 function ensureDir(dir: string) {
   mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -74,7 +73,7 @@ export function requireConfig(): Config {
   const config = readConfig();
   if (!config) {
     throw new Error(
-      'This machine is not enrolled yet. Create a code in the CyberMind dashboard and run `cybermind enroll <code>`.'
+      'This machine is not enrolled yet. Create a code in the vibivibi dashboard and run `vibi enroll <code>`.'
     );
   }
   return config;
@@ -88,28 +87,11 @@ export function deleteConfig() {
   rmSync(configPath(), { force: true });
 }
 
-export function readKeyPair(): StoredKeyPair | null {
-  if (!existsSync(keyPath())) return null;
-  return storedKeySchema.parse(JSON.parse(readFileSync(keyPath(), 'utf8')));
+export function readUserKey(): LocalUserKey | null {
+  if (!existsSync(userKeyPath())) return null;
+  return localUserKeySchema.parse(JSON.parse(readFileSync(userKeyPath(), 'utf8')));
 }
 
-export function writeKeyPair(pair: MachineKeyPair, fingerprint: string) {
-  const stored: StoredKeyPair = {
-    algorithm: pair.algorithm,
-    publicKey: pair.publicKey,
-    privateKey: pair.privateKey,
-    fingerprint,
-    createdAt: new Date().toISOString()
-  };
-  writePrivateJson(keyPath(), stored);
-  return stored;
-}
-
-/** Moves the active key pair into keys/archive/<fingerprint>.json. */
-export function archiveKeyPair(current: StoredKeyPair) {
-  ensureDir(keyArchiveDir());
-  const target = join(keyArchiveDir(), `${current.fingerprint}.json`);
-  renameSync(keyPath(), target);
-  chmodSync(target, 0o600);
-  return target;
+export function writeUserKey(key: LocalUserKey) {
+  writePrivateJson(userKeyPath(), localUserKeySchema.parse(key));
 }

@@ -1,18 +1,22 @@
 {
-  "name": "@cybermind/cli",
+  "name": "vibi",
   "version": "0.1.0",
-  "description": "CyberMind machine client: enrolls this machine, keeps its private key local, and reports coding-agent sessions to your CyberMind account.",
+  "description": "vibi: the vibivibi machine client. Enrolls this machine, keeps its private key local, and uploads encrypted coding-agent sessions.",
   "private": true,
   "type": "module",
   "bin": {
-    "cybermind": "./bin/cybermind.mjs"
+    "vibi": "./bin/vibi.mjs"
   },
   "scripts": {
     "dev": "tsx src/index.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build:tui": "node scripts/build-tui.mjs",
+    "build:tui:host": "node scripts/build-tui.mjs --host",
+    "prepack": "node scripts/build-tui.mjs"
   },
   "dependencies": {
-    "@cybermind/shared": "workspace:*",
+    "@vibivibi/shared": "workspace:*",
+    "@vercel/blob": "2.8.0",
     "commander": "^15.0.0",
     "tsx": "^4.23.15",
     "zod": "^3.24.4"

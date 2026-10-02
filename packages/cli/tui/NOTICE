@@ -1,0 +1,3 @@
+The TUI in this directory is derived from subconscious-cli
+(https://github.com/subconscious-systems/subconscious, MIT licensed),
+specifically its tui/cmd/subc-tui/main.go and bin/tui.js launcher.

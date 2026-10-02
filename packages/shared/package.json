@@ -1,13 +1,16 @@
 {
-  "name": "@cybermind/shared",
+  "name": "@vibivibi/shared",
   "version": "0.1.0",
   "private": true,
-  "description": "Types, API schemas and key material helpers shared by the CyberMind web app and the machine client.",
+  "description": "Types, API schemas and crypto shared by the vibivibi web app and the vibi machine client.",
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
     "./api": "./src/api.ts",
-    "./crypto": "./src/crypto.ts"
+    "./crypto": "./src/crypto.ts",
+    "./envelope": "./src/envelope.ts",
+    "./sessions": "./src/sessions.ts",
+    "./userkey": "./src/userkey.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"
