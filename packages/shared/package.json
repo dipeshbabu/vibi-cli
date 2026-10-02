@@ -1,0 +1,22 @@
+{
+  "name": "@cybermind/shared",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Types, API schemas and key material helpers shared by the CyberMind web app and the machine client.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./api": "./src/api.ts",
+    "./crypto": "./src/crypto.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "zod": "^3.24.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.18",
+    "typescript": "^5.8.3"
+  }
+}
