@@ -83,10 +83,21 @@ type progressState struct {
 	Total  int64  `json:"total"`
 }
 
+// askState is a yes/no question Node answers a request with instead of a
+// result ("ask" status): yes dispatches a follow-up request with Action and
+// the original request's key, name and email.
+type askState struct {
+	Action string `json:"action"`
+	Title  string `json:"title"`
+	Yes    string `json:"yes"`
+	No     string `json:"no"`
+}
+
 type requestResult struct {
-	Status   string         `json:"status"`
+	Status   string         `json:"status"` // running | done | error | ask
 	Message  string         `json:"message"`
 	Progress *progressState `json:"progress"`
+	Ask      *askState      `json:"ask"`
 }
 
 var phaseLabels = map[string]string{
@@ -130,6 +141,7 @@ const (
 	screenBusy
 	screenRemote
 	screenVersions
+	screenConfirm
 )
 
 var actionItems = []string{
@@ -157,6 +169,10 @@ type model struct {
 	noticeIsError  bool
 	busyID         string
 	busyText       string
+	busyRequest    outRequest
+	confirm        askState
+	confirmMessage string
+	confirmCursor  int
 	seq            int
 	width          int
 	height         int
@@ -351,8 +367,20 @@ func (m model) dispatch(request outRequest, busyText string) (model, tea.Cmd) {
 	}
 	m.busyID = request.ID
 	m.busyText = busyText
+	m.busyRequest = request
 	m.screen = screenBusy
 	return m, nil
+}
+
+// confirmYes re-dispatches the busy request under the follow-up action.
+func (m model) confirmYes() (model, tea.Cmd) {
+	request := m.busyRequest
+	request.Action = m.confirm.Action
+	busy := m.confirm.Yes
+	if request.Action == "invite" {
+		busy = "Inviting " + request.Email
+	}
+	return m.dispatch(request, busy)
 }
 
 func (m model) submit(action, email string) (model, tea.Cmd) {
@@ -400,9 +428,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.screen == screenBusy {
 			if result, ok := m.requests[m.busyID]; ok && result.Status != "running" && result.Status != "" {
-				m.notice = result.Message
-				m.noticeIsError = result.Status == "error"
-				m.screen = m.homeScreen()
+				if result.Status == "ask" && result.Ask != nil {
+					m.confirm = *result.Ask
+					m.confirmMessage = result.Message
+					m.confirmCursor = 0
+					m.screen = screenConfirm
+				} else {
+					m.notice = result.Message
+					m.noticeIsError = result.Status == "error"
+					m.screen = m.homeScreen()
+				}
 			}
 		}
 		return m, tickUpdates()
@@ -424,6 +459,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateRemote(key)
 		case screenVersions:
 			return m.updateVersions(key)
+		case screenConfirm:
+			return m.updateConfirm(key)
 		default:
 			return m.updateSessions(key)
 		}
@@ -520,6 +557,27 @@ func (m model) updateVersions(key string) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m.submitPull(remote.Versions[m.versionCursor].ID)
+	}
+	return m, nil
+}
+
+func (m model) updateConfirm(key string) (tea.Model, tea.Cmd) {
+	switch key {
+	case "q", "esc", "n":
+		m.notice = "Nothing sent."
+		m.noticeIsError = false
+		m.screen = m.homeScreen()
+	case "up", "k", "down", "j", "tab":
+		m.confirmCursor = 1 - m.confirmCursor
+	case "y":
+		return m.confirmYes()
+	case "enter":
+		if m.confirmCursor == 0 {
+			return m.confirmYes()
+		}
+		m.notice = "Nothing sent."
+		m.noticeIsError = false
+		m.screen = m.homeScreen()
 	}
 	return m, nil
 }
@@ -673,6 +731,8 @@ func (m model) View() tea.View {
 		content = m.renderRemote()
 	case screenVersions:
 		content = m.renderVersions()
+	case screenConfirm:
+		content = m.renderConfirm()
 	default:
 		content = m.renderSessions()
 	}
@@ -955,6 +1015,10 @@ func (m model) renderEmail() string {
 		"The recipient must already be a vibivibi user with an encryption key. The session is encrypted for their key before it leaves this machine.",
 		m.emailInput, m.emailCursor, "name@example.com", "enter send   esc back",
 	)
+}
+
+func (m model) renderConfirm() string {
+	return m.renderPicker(m.confirm.Title, []string{m.confirm.Yes, m.confirm.No}, m.confirmCursor, m.confirmMessage)
 }
 
 func progressBar(loaded, total int64, width int) string {

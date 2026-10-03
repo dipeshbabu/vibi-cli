@@ -63,7 +63,8 @@ export type TuiState = {
 
 export type TuiRequest = {
   id: string;
-  action: 'sync' | 'send' | 'pull';
+  /** invite: the follow-up the TUI sends after the user confirms an "ask" result. */
+  action: 'sync' | 'send' | 'pull' | 'invite';
   /** push: the local session key; pull: the remote id ("#20" / "s5"). */
   key: string;
   name: string;
@@ -71,7 +72,18 @@ export type TuiRequest = {
   versionId?: number;
 };
 
-export type TuiRequestResult = { status: 'running' | 'done' | 'error'; message: string; progress?: Progress };
+/**
+ * A yes/no question the TUI shows instead of a result. On yes it dispatches a
+ * new request with `action` and the same key/name/email as the original one.
+ */
+export type TuiAsk = { action: 'invite'; title: string; yes: string; no: string };
+
+export type TuiRequestResult = {
+  status: 'running' | 'done' | 'error' | 'ask';
+  message: string;
+  progress?: Progress;
+  ask?: TuiAsk;
+};
 
 type TuiPatch = {
   sessions?: TuiSession[];
@@ -114,7 +126,10 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 export type RunTuiOptions = {
   state: TuiState;
   /** Performs the action, reporting progress; the returned message is shown in the TUI. */
-  onRequest: (request: TuiRequest, report: ProgressReporter) => Promise<{ message: string; sessions?: TuiSession[]; remote?: TuiRemote[] }>;
+  onRequest: (
+    request: TuiRequest,
+    report: ProgressReporter
+  ) => Promise<{ message: string; sessions?: TuiSession[]; remote?: TuiRemote[]; ask?: TuiAsk }>;
 };
 
 /** Runs the TUI until the user quits; resolves afterwards. */
@@ -167,7 +182,11 @@ export async function runTui(options: RunTuiOptions): Promise<void> {
       try {
         const result = await options.onRequest(request, report);
         await enqueue({
-          requests: { [request.id]: { status: 'done', message: result.message } },
+          requests: {
+            [request.id]: result.ask
+              ? { status: 'ask', message: result.message, ask: result.ask }
+              : { status: 'done', message: result.message }
+          },
           ...(result.sessions ? { sessions: result.sessions } : {}),
           ...(result.remote ? { remote: result.remote } : {})
         });

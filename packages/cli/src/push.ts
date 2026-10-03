@@ -1,5 +1,11 @@
 import path from 'node:path';
-import { sessionDetailResponseSchema, userLookupResponseSchema } from '@vibivibi/shared/sessions';
+import {
+  type InviteResponse,
+  LOOKUP_NOT_REGISTERED,
+  inviteResponseSchema,
+  sessionDetailResponseSchema,
+  userLookupResponseSchema
+} from '@vibivibi/shared/sessions';
 import { addRecipient, contentKeyFor } from '@vibivibi/shared/envelope';
 import { ApiError, request } from './api';
 import { readUserKey, type Config, type LocalUserKey } from './config';
@@ -118,6 +124,51 @@ export async function syncSession(
 
 export type SendOutcome = SyncOutcome & { recipient: string; reusedVersion: boolean };
 
+/** The address has no vibivibi account; the caller may offer to invite it. */
+export class RecipientNotRegistered extends Error {
+  constructor(public readonly email: string) {
+    super(`${email} is not a vibivibi user yet.`);
+    this.name = 'RecipientNotRegistered';
+  }
+}
+
+/** Looks up the recipient's public key, turning "unknown address" into RecipientNotRegistered. */
+async function lookupRecipient(config: Config, email: string) {
+  try {
+    return await request(config.serverUrl, `/api/client/users/lookup?email=${encodeURIComponent(email)}`, {
+      token: config.deviceToken,
+      schema: userLookupResponseSchema
+    });
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404 && error.code === LOOKUP_NOT_REGISTERED) {
+      throw new RecipientNotRegistered(email.trim().toLowerCase());
+    }
+    throw error;
+  }
+}
+
+/**
+ * Invites an address to join. The server mails a sign-up link through Clerk;
+ * the session has to be sent again once they have signed up and enrolled,
+ * because nothing can be encrypted for a key that does not exist yet.
+ */
+export async function inviteRecipient(config: Config, email: string, session?: LocalSession): Promise<InviteResponse> {
+  const known = session ? readState().sessions[session.key] : undefined;
+  return request(config.serverUrl, '/api/client/invitations', {
+    method: 'POST',
+    token: config.deviceToken,
+    body: { email, ...(known?.sessionId ? { sessionId: known.sessionId } : {}) },
+    schema: inviteResponseSchema
+  });
+}
+
+/** One line for the user after inviteRecipient. */
+export function describeInvite(r: InviteResponse): string {
+  return r.status === 'sent'
+    ? `Invitation emailed to ${r.email}. Once they sign up and run \`vibi enroll\`, send the session again.`
+    : `${r.email} was already invited on ${new Date(r.invitedAt).toLocaleDateString()}; no second email was sent. Send the session again once they have enrolled.`;
+}
+
 /**
  * Send: make the current content readable by another user. If the stored
  * version is already up to date and the key is unlocked here, the content key
@@ -132,10 +183,7 @@ export async function sendSession(
   email: string,
   opts: { onProgress?: ProgressReporter } = {}
 ): Promise<SendOutcome> {
-  const recipient = await request(config.serverUrl, `/api/client/users/lookup?email=${encodeURIComponent(email)}`, {
-    token: config.deviceToken,
-    schema: userLookupResponseSchema
-  });
+  const recipient = await lookupRecipient(config, email);
   const { trace, hash } = await readTrace(session, opts.onProgress);
   const state = readState();
   const prev = state.sessions[session.key];

@@ -184,6 +184,26 @@ export const userLookupResponseSchema = z.object({
 });
 export type UserLookup = z.infer<typeof userLookupResponseSchema>;
 
+/** Error codes the lookup returns with 404 so the client can offer an invitation. */
+export const LOOKUP_NOT_REGISTERED = 'not_registered';
+export const LOOKUP_NO_KEY = 'no_key';
+
+/** Invite an address that has no account yet; the server mails a sign-up link. */
+export const inviteRequestSchema = z.object({
+  email: emailSchema,
+  /** The stored session the sender wanted to share, when known. */
+  sessionId: z.number().int().positive().optional()
+});
+export type InviteRequest = z.infer<typeof inviteRequestSchema>;
+
+export const inviteResponseSchema = z.object({
+  email: z.string(),
+  /** already_invited: this sender already has a pending invitation for the address; nothing was mailed again. */
+  status: z.enum(['sent', 'already_invited']),
+  invitedAt: z.string()
+});
+export type InviteResponse = z.infer<typeof inviteResponseSchema>;
+
 export const sessionSummarySchema = z.object({
   id: z.number().int(),
   pullId: z.string(),

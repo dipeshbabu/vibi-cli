@@ -3,7 +3,18 @@ import { ApiError } from '../api';
 import { requireConfig } from '../config';
 import { discoverContext, discoverLocalSessions, type LocalSession } from '../harnesses';
 import { fail } from '../log';
-import { ensurePublicKey, sendSession, sessionStatus, sessionsForDirectory, syncSession } from '../push';
+import {
+  RecipientNotRegistered,
+  describeInvite,
+  ensurePublicKey,
+  inviteRecipient,
+  sendSession,
+  sessionStatus,
+  sessionsForDirectory,
+  syncSession,
+  type SendOutcome
+} from '../push';
+import { promptYesNo } from '../password';
 import { readState } from '../state';
 import { runTui, type TuiSession } from '../tui';
 import { VERSION } from '../version';
@@ -25,6 +36,19 @@ function toTuiSessions(sessions: LocalSession[]): TuiSession[] {
   }));
 }
 
+/**
+ * Whether to email an invitation to an address that has no account:
+ * --invite / --no-invite decide outright, VIBI_INVITE does for scripts, and
+ * otherwise a terminal is asked. Without a terminal nothing is sent.
+ */
+async function wantsInvite(flag: boolean | undefined, email: string): Promise<boolean> {
+  if (flag !== undefined) return flag;
+  const forced = process.env.VIBI_INVITE;
+  if (forced !== undefined) return /^(1|true|yes|y)$/i.test(forced.trim());
+  if (!process.stdin.isTTY || !process.stdout.isTTY) return false;
+  return promptYesNo(`Email ${email} an invitation to sign up? [Y/n] `, true);
+}
+
 function findSession(sessions: LocalSession[], ref: string) {
   const index = Number(ref);
   if (Number.isInteger(index) && index >= 1 && index <= sessions.length) return sessions[index - 1];
@@ -37,7 +61,18 @@ function findSession(sessions: LocalSession[], ref: string) {
  * `vibi push --session <key|n> --sync [--name]` non-interactive sync
  * `vibi push --session <key|n> --send <email>`  non-interactive send
  */
-export async function push(opts: { session?: string; sync?: boolean; send?: string; name?: string; list?: boolean; json?: boolean; all?: boolean; force?: boolean; max: string }) {
+export async function push(opts: {
+  session?: string;
+  sync?: boolean;
+  send?: string;
+  name?: string;
+  list?: boolean;
+  json?: boolean;
+  all?: boolean;
+  force?: boolean;
+  invite?: boolean;
+  max: string;
+}) {
   const config = requireConfig();
   const dir = process.cwd();
   const max = Math.max(1, Number(opts.max) || 500);
@@ -65,7 +100,18 @@ export async function push(opts: { session?: string; sync?: boolean; send?: stri
       const label = opts.name !== undefined ? opts.name : undefined;
       const progress = lineReporter();
       if (opts.send) {
-        const r = await sendSession(config, key, session, label, opts.send, { onProgress: progress }).finally(() => progress.finish());
+        let r: SendOutcome;
+        try {
+          r = await sendSession(config, key, session, label, opts.send, { onProgress: progress }).finally(() => progress.finish());
+        } catch (error) {
+          if (!(error instanceof RecipientNotRegistered)) throw error;
+          console.log(`${error.email} is not a vibivibi user yet, so nothing was sent.`);
+          if (!(await wantsInvite(opts.invite, error.email))) {
+            fail(`invite them later with \`vibi invite ${error.email}\`, or pass --invite.`);
+          }
+          console.log(describeInvite(await inviteRecipient(config, error.email, session)));
+          return;
+        }
         console.log(
           r.reusedVersion
             ? `Sent #${r.pullId} v${r.seq ?? '?'} to ${r.recipient}; the stored copy was re-keyed, nothing re-uploaded.`
@@ -101,8 +147,20 @@ export async function push(opts: { session?: string; sync?: boolean; send?: stri
         if (!session) throw new Error('That session is no longer in the list.');
         const label = request.name ? request.name : undefined;
         let message: string;
-        if (request.action === 'send') {
-          const r = await sendSession(config, key, session, label, request.email, { onProgress: report });
+        if (request.action === 'invite') {
+          // The follow-up after the picker's "not registered" question.
+          message = describeInvite(await inviteRecipient(config, request.email, session));
+        } else if (request.action === 'send') {
+          let r: SendOutcome;
+          try {
+            r = await sendSession(config, key, session, label, request.email, { onProgress: report });
+          } catch (error) {
+            if (!(error instanceof RecipientNotRegistered)) throw error;
+            return {
+              message: `${error.email} is not a vibivibi user yet, so nothing was sent. Email them an invitation to sign up? You can send the session once they have enrolled.`,
+              ask: { action: 'invite', title: 'Not a vibivibi user yet', yes: `Email ${error.email} an invitation`, no: 'Not now' }
+            };
+          }
           message = r.reusedVersion
             ? `Sent #${r.pullId} v${r.seq ?? '?'} to ${r.recipient} (re-keyed, nothing re-uploaded)`
             : `Sent #${r.pullId} to ${r.recipient} as new version v${r.seq ?? '?'}`;

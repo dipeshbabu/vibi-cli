@@ -5,7 +5,9 @@ import { VERSION } from './version';
 export class ApiError extends Error {
   constructor(
     public readonly status: number,
-    message: string
+    message: string,
+    /** Machine-readable reason some error responses carry (e.g. "not_registered"). */
+    public readonly code?: string
   ) {
     super(message);
     this.name = 'ApiError';
@@ -56,7 +58,8 @@ export async function request<T>(
     const parsed = apiErrorSchema.safeParse(json);
     throw new ApiError(
       response.status,
-      parsed.success ? parsed.data.error : `HTTP ${response.status} from ${path}`
+      parsed.success ? parsed.data.error : `HTTP ${response.status} from ${path}`,
+      parsed.success ? parsed.data.code : undefined
     );
   }
 

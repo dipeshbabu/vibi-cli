@@ -103,4 +103,5 @@ export const rewrapUserKeyRequestSchema = z.object({
   encryptedPrivateKey: encryptedPrivateKeySchema
 });
 
-export const apiErrorSchema = z.object({ error: z.string() });
+/** Error bodies carry a message and, where the client needs to branch, a short code. */
+export const apiErrorSchema = z.object({ error: z.string(), code: z.string().optional() });

@@ -2,6 +2,7 @@ import { Command } from 'commander';
 import { enroll } from './commands/enroll';
 import { pull } from './commands/pull';
 import { push } from './commands/push';
+import { invite } from './commands/invite';
 import { changePassword, lock, unlock } from './commands/key';
 import { sessions } from './commands/sessions';
 import { status } from './commands/status';
@@ -44,8 +45,16 @@ program
   .option('--json', 'print them as JSON and exit')
   .option('--all', 'consider sessions from every directory, not just this one')
   .option('--force', 'upload even if this machine believes the session is already stored')
+  .option('--invite', 'with --send: if the address has no account, email an invitation without asking')
+  .option('--no-invite', 'with --send: never email an invitation')
   .option('--max <count>', 'newest sessions to scan', '500')
   .action(push);
+
+program
+  .command('invite')
+  .description('Email someone an invitation to join vibivibi so you can send them sessions')
+  .argument('<email>', 'their email address')
+  .action(invite);
 
 program
   .command('pull')
