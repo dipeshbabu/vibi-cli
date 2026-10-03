@@ -10,7 +10,8 @@
     "./crypto": "./src/crypto.ts",
     "./envelope": "./src/envelope.ts",
     "./sessions": "./src/sessions.ts",
-    "./userkey": "./src/userkey.ts"
+    "./userkey": "./src/userkey.ts",
+    "./passphrase": "./src/passphrase.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

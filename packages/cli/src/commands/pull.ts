@@ -20,6 +20,7 @@ import { fail } from '../log';
 import { runTui, type TuiRemote } from '../tui';
 import { VERSION } from '../version';
 import { lineReporter, type ProgressReporter } from '../progress';
+import { claimPendingSessions } from '../claim';
 
 function formatSize(bytes: number | null) {
   if (bytes === null) return '—';
@@ -65,7 +66,20 @@ async function fetchDetail(config: Config, sessionId: number): Promise<SessionDe
   });
 }
 
+/** The share is still encrypted for a provisional key: claim it with the sender's passphrase first. */
+class NeedsPassphrase extends Error {
+  constructor(
+    public readonly pendingId: number,
+    public readonly fromEmail: string,
+    public readonly pullId: string
+  ) {
+    super(`#${pullId} from ${fromEmail} needs the passphrase they gave you; run \`vibi pull ${pullId}\` in a terminal to enter it.`);
+    this.name = 'NeedsPassphrase';
+  }
+}
+
 function sharedTarget(share: SharedSession): Target {
+  if (share.needsPassphrase && share.pendingRecipientId !== null) throw new NeedsPassphrase(share.pendingRecipientId, share.fromEmail, share.pullId);
   return {
     id: `#${share.pullId}`,
     harness: share.harness,
@@ -227,7 +241,7 @@ async function remoteEntries(config: Config, key: LocalUserKey | null, into: str
       id: `#${s.pullId}`,
       title,
       label: s.label ?? '',
-      meta: `from ${s.fromEmail} · ${harnessName(s.harness)} · sent ${new Date(s.sentAt).toLocaleString()} · ${formatSize(s.sizeBytes)}`,
+      meta: `from ${s.fromEmail} · ${harnessName(s.harness)} · sent ${new Date(s.sentAt).toLocaleString()} · ${formatSize(s.sizeBytes)}${s.needsPassphrase ? ' · needs passphrase' : ''}`,
       updatedAt: s.sentAt,
       installed: false,
       versions: [{ id: s.versionId, label: `v${s.versionId}  ${formatSize(s.sizeBytes)}`, latest: true }]
@@ -255,7 +269,7 @@ function printList(sessions: RemoteSession[], shared: SharedSession[], key: Loca
     const { title, cwd } = titleOf(s.envelope, key);
     console.log(`#${s.pullId}  ${s.label ? `[${s.label}] ` : ''}${title}`);
     console.log(
-      `    from ${s.fromEmail} · ${harnessName(s.harness)} · sent ${new Date(s.sentAt).toLocaleString()} · ${formatSize(s.sizeBytes)}${cwd ? ` · ${cwd}` : ''}`
+      `    from ${s.fromEmail} · ${harnessName(s.harness)} · sent ${new Date(s.sentAt).toLocaleString()} · ${formatSize(s.sizeBytes)}${cwd ? ` · ${cwd}` : ''}${s.needsPassphrase ? ' · needs passphrase' : ''}`
     );
   }
   console.log('\nDownload with `vibi pull <id>` (Claude Code: add --into <project dir>; older versions: `--versions`, then `--rev <n>`).');
@@ -338,7 +352,16 @@ export async function pull(
     if (!key) fail('the encryption password is required to pull.');
     const progress = lineReporter();
     try {
-      const target = await resolveTarget(config, id, opts.rev);
+      let target: Target;
+      try {
+        target = await resolveTarget(config, id, opts.rev);
+      } catch (error) {
+        if (!(error instanceof NeedsPassphrase)) throw error;
+        // Sent before this account had a key: unlock with the sender's passphrase, re-key for our key, then pull normally.
+        const claimed = await claimPendingSessions(config, key, { interactive: Boolean(process.stdin.isTTY) || process.env.VIBI_PASSPHRASE !== undefined, only: error.pendingId });
+        if (claimed.claimed === 0) fail(`#${error.pullId} is still waiting for the passphrase from ${error.fromEmail}.`);
+        target = await resolveTarget(config, id, opts.rev);
+      }
       console.log(await pullTarget(config, key, target, { into: opts.into, out: opts.out, overwrite: opts.overwrite }, progress).finally(() => progress.finish()));
     } catch (error) {
       if (error instanceof InstallConflict) fail(error.message);

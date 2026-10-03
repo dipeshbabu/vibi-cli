@@ -1,12 +1,15 @@
 import path from 'node:path';
 import {
   type InviteResponse,
-  LOOKUP_NOT_REGISTERED,
   inviteResponseSchema,
+  pendingRecipientResponseSchema,
   sessionDetailResponseSchema,
   userLookupResponseSchema
 } from '@vibivibi/shared/sessions';
 import { addRecipient, contentKeyFor } from '@vibivibi/shared/envelope';
+import { generateKeyPair } from '@vibivibi/shared/crypto';
+import { wrapPrivateKey } from '@vibivibi/shared/userkey';
+import { PASSPHRASE_SCRYPT_PARAMS, generatePassphrase, normalizePassphrase } from '@vibivibi/shared/passphrase';
 import { ApiError, request } from './api';
 import { readUserKey, type Config, type LocalUserKey } from './config';
 import { adapterFor, discoverContext, discoverLocalSessions, type LocalSession, type TraceContent } from './harnesses';
@@ -122,29 +125,55 @@ export async function syncSession(
   return uploadVersion(config, key, { session, trace, plaintextHash: hash, label, recipients: [key.publicKey] }, opts.onProgress);
 }
 
-export type SendOutcome = SyncOutcome & { recipient: string; reusedVersion: boolean };
+export type SendOutcome = SyncOutcome & {
+  recipient: string;
+  reusedVersion: boolean;
+  /** The copy was encrypted for a provisional key made by this account; the recipient claims it with a passphrase. */
+  provisional: boolean;
+  /** The passphrase to pass on, when the provisional key was made on this machine. */
+  passphrase: string | null;
+  /** Whether the address already had an account (otherwise an invitation was emailed). */
+  registered: boolean;
+};
 
-/** The address has no vibivibi account; the caller may offer to invite it. */
-export class RecipientNotRegistered extends Error {
-  constructor(public readonly email: string) {
-    super(`${email} is not a vibivibi user yet.`);
-    this.name = 'RecipientNotRegistered';
-  }
-}
+export type Recipient = { email: string; publicKey: string; provisional: boolean; passphrase: string | null; registered: boolean };
 
-/** Looks up the recipient's public key, turning "unknown address" into RecipientNotRegistered. */
-async function lookupRecipient(config: Config, email: string) {
+/**
+ * Who to encrypt for. An address with a key is used as is. Otherwise a key
+ * pair is generated here on their behalf, its private key wrapped with a
+ * random passphrase, and both registered with the server; the sender passes
+ * the passphrase on through another channel. The same pair is reused for
+ * later sends to that address until they claim it.
+ */
+export async function resolveRecipient(config: Config, rawEmail: string): Promise<Recipient> {
+  const email = rawEmail.trim().toLowerCase();
   try {
-    return await request(config.serverUrl, `/api/client/users/lookup?email=${encodeURIComponent(email)}`, {
+    const found = await request(config.serverUrl, `/api/client/users/lookup?email=${encodeURIComponent(email)}`, {
       token: config.deviceToken,
       schema: userLookupResponseSchema
     });
+    return { email: found.email, publicKey: found.publicKey, provisional: false, passphrase: null, registered: true };
   } catch (error) {
-    if (error instanceof ApiError && error.status === 404 && error.code === LOOKUP_NOT_REGISTERED) {
-      throw new RecipientNotRegistered(email.trim().toLowerCase());
-    }
-    throw error;
+    if (!(error instanceof ApiError && error.status === 404)) throw error;
   }
+  const state = readState();
+  const local = state.pending[email];
+  const pair = local ? { publicKey: local.publicKey, privateKey: local.privateKey } : generateKeyPair();
+  const passphrase = local?.passphrase ?? generatePassphrase();
+  const encryptedPrivateKey = wrapPrivateKey(pair, normalizePassphrase(passphrase), PASSPHRASE_SCRYPT_PARAMS);
+  const remote = await request(config.serverUrl, '/api/client/pending-recipients', {
+    method: 'POST',
+    token: config.deviceToken,
+    body: { email, publicKey: pair.publicKey, encryptedPrivateKey },
+    schema: pendingRecipientResponseSchema
+  });
+  if (remote.publicKey === pair.publicKey) {
+    state.pending[email] = { id: remote.id, email, publicKey: pair.publicKey, privateKey: pair.privateKey, fingerprint: remote.fingerprint, passphrase, createdAt: local?.createdAt ?? new Date().toISOString() };
+    writeState(state);
+    return { email, publicKey: remote.publicKey, provisional: true, passphrase, registered: remote.registered };
+  }
+  // A provisional key for this address already exists, made on another of our machines: use it; its passphrase lives there.
+  return { email, publicKey: remote.publicKey, provisional: true, passphrase: null, registered: remote.registered };
 }
 
 /**
@@ -183,7 +212,8 @@ export async function sendSession(
   email: string,
   opts: { onProgress?: ProgressReporter } = {}
 ): Promise<SendOutcome> {
-  const recipient = await lookupRecipient(config, email);
+  const recipient = await resolveRecipient(config, email);
+  const extra = { provisional: recipient.provisional, passphrase: recipient.passphrase, registered: recipient.registered };
   const { trace, hash } = await readTrace(session, opts.onProgress);
   const state = readState();
   const prev = state.sessions[session.key];
@@ -213,7 +243,7 @@ export async function sendSession(
         writeState(state);
       }
       opts.onProgress?.({ phase: 'done' });
-      return { sessionId: prev!.sessionId, pullId: detail!.pullId, versionId: version.id, seq: version.seq, uploaded: false, recipient: recipient.email, reusedVersion: true };
+      return { sessionId: prev!.sessionId, pullId: detail!.pullId, versionId: version.id, seq: version.seq, uploaded: false, recipient: recipient.email, reusedVersion: true, ...extra };
     }
   }
 
@@ -225,5 +255,18 @@ export async function sendSession(
     recipients: [key.publicKey, recipient.publicKey],
     shareWith: [recipient.email]
   }, opts.onProgress);
-  return { ...result, recipient: recipient.email, reusedVersion: false };
+  return { ...result, recipient: recipient.email, reusedVersion: false, ...extra };
+}
+
+/** One line for the user after a send: where it went and, for a provisional key, the passphrase to pass on. */
+export function describeSend(r: SendOutcome, compact = false): string {
+  const head = r.reusedVersion
+    ? `Sent #${r.pullId} v${r.seq ?? '?'} to ${r.recipient}${compact ? ' (re-keyed, nothing re-uploaded)' : '; the stored copy was re-keyed, nothing re-uploaded.'}`
+    : `Sent #${r.pullId} to ${r.recipient} as new version v${r.seq ?? '?'}${compact ? '' : '.'}`;
+  if (!r.provisional) return head;
+  const who = r.registered ? 'They have an account but no key yet' : 'They have no account yet (an invitation was emailed)';
+  if (r.passphrase) {
+    return `${head}\n${who}. Give them this passphrase through another channel; vibi asks for it when they enroll:\n  ${r.passphrase}`;
+  }
+  return `${head}\n${who}. The copy is encrypted for the provisional key made on another of your machines; \`vibi pending\` there shows the passphrase, or \`vibi pending --reset ${r.recipient}\` makes a new one here.`;
 }

@@ -4,6 +4,7 @@ import { DEFAULT_SERVER_URL, readConfig, writeConfig } from '../config';
 import { fail } from '../log';
 import { describeThisMachine } from '../machine';
 import { ensureUserKey } from '../userkey';
+import { claimPendingSessions } from '../claim';
 
 export async function enroll(
   code: string,
@@ -46,8 +47,14 @@ export async function enroll(
     writeConfig(config);
     console.log(`Enrolled as "${result.name}" (machine #${result.machineId}) at ${serverUrl}.`);
 
-    await ensureUserKey(config, { unlock: opts.unlock !== false, remember: opts.remember });
-    console.log('Run `vibi sync` to upload this machine\'s sessions (or `vibi daemon` to keep syncing), and `vibi pull` to fetch sessions from your other machines.');
+    const key = await ensureUserKey(config, { unlock: opts.unlock !== false, remember: opts.remember });
+    // Sessions people sent this address before it had a key: claim them now with their passphrases.
+    try {
+      await claimPendingSessions(config, key, { interactive: Boolean(process.stdin.isTTY) || process.env.VIBI_PASSPHRASE !== undefined });
+    } catch (error) {
+      console.error(`Could not check for sessions waiting on a passphrase: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    console.log('Run `vibi push` in a project directory to store or send a session, and `vibi pull` to fetch sessions from your other machines.');
   } catch (error) {
     if (error instanceof ApiError) fail(error.message);
     throw error;

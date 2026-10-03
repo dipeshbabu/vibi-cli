@@ -184,9 +184,72 @@ export const userLookupResponseSchema = z.object({
 });
 export type UserLookup = z.infer<typeof userLookupResponseSchema>;
 
-/** Error codes the lookup returns with 404 so the client can offer an invitation. */
-export const LOOKUP_NOT_REGISTERED = 'not_registered';
+/**
+ * The lookup answers 404 with this one code whether the address has no
+ * account or an account without a key: the client then sends to a
+ * provisional key either way, so nothing more needs to be revealed.
+ */
 export const LOOKUP_NO_KEY = 'no_key';
+/** Kept for older clients; the server no longer distinguishes the two cases. */
+export const LOOKUP_NOT_REGISTERED = LOOKUP_NO_KEY;
+
+/** Sender registers (or re-fetches) the provisional key it made for an address without a key. */
+export const pendingRecipientRequestSchema = z.object({
+  email: emailSchema,
+  publicKey: z.string(),
+  encryptedPrivateKey: z.unknown()
+});
+export const pendingRecipientResponseSchema = z.object({
+  id: z.number().int(),
+  email: z.string(),
+  publicKey: z.string(),
+  fingerprint: z.string(),
+  /** false: a provisional key for this address already existed (made on another machine); use that one. */
+  created: z.boolean(),
+  expiresAt: z.string(),
+  /** true when the address has an account already (it just has no key yet). */
+  registered: z.boolean()
+});
+export type PendingRecipientResponse = z.infer<typeof pendingRecipientResponseSchema>;
+
+export const pendingRecipientSummarySchema = z.object({
+  id: z.number().int(),
+  email: z.string(),
+  fingerprint: z.string(),
+  createdAt: z.string(),
+  expiresAt: z.string(),
+  claimedAt: z.string().nullable(),
+  shareCount: z.number().int()
+});
+export const listPendingRecipientsResponseSchema = z.object({ pending: z.array(pendingRecipientSummarySchema) });
+
+/** What a recipient has to claim: each provisional key with the shares encrypted for it. */
+export const pendingClaimSchema = z.object({
+  id: z.number().int(),
+  fromEmail: z.string(),
+  publicKey: z.string(),
+  fingerprint: z.string(),
+  encryptedPrivateKey: z.unknown(),
+  expiresAt: z.string(),
+  shares: z.array(
+    z.object({
+      shareId: z.number().int(),
+      pullId: z.string(),
+      versionId: z.number().int(),
+      label: z.string().nullable(),
+      harness: harnessSchema,
+      sizeBytes: z.number().int(),
+      envelope: envelopeHeaderSchema
+    })
+  )
+});
+export type PendingClaim = z.infer<typeof pendingClaimSchema>;
+export const listPendingClaimsResponseSchema = z.object({ pending: z.array(pendingClaimSchema) });
+
+export const claimRequestSchema = z.object({
+  envelopes: z.array(z.object({ versionId: z.number().int(), envelope: envelopeHeaderSchema })).min(1).max(500)
+});
+export const claimResponseSchema = z.object({ claimed: z.number().int() });
 
 /** Invite an address that has no account yet; the server mails a sign-up link. */
 export const inviteRequestSchema = z.object({
@@ -256,7 +319,10 @@ export const sharedSessionSchema = z.object({
   versionId: z.number().int(),
   sizeBytes: z.number().int(),
   envelope: envelopeHeaderSchema,
-  sentAt: z.string()
+  sentAt: z.string(),
+  /** Encrypted for a provisional key the sender made; claim it with the sender's passphrase first. */
+  needsPassphrase: z.boolean().default(false),
+  pendingRecipientId: z.number().int().nullable().default(null)
 });
 export type SharedSession = z.infer<typeof sharedSessionSchema>;
 
