@@ -67,7 +67,7 @@ export type TuiState = {
 export type TuiRequest = {
   id: string;
   /** invite: the follow-up the TUI sends after the user confirms an "ask" result. */
-  action: 'sync' | 'send' | 'pull' | 'invite';
+  action: 'sync' | 'send' | 'send-confirmed' | 'pull' | 'invite';
   /** push: the local session key; pull: the remote id ("#20" / "s5"). */
   key: string;
   name: string;
@@ -79,7 +79,7 @@ export type TuiRequest = {
  * A yes/no question the TUI shows instead of a result. On yes it dispatches a
  * new request with `action` and the same key/name/email as the original one.
  */
-export type TuiAsk = { action: 'invite'; title: string; yes: string; no: string };
+export type TuiAsk = { action: 'invite' | 'send-confirmed'; title: string; yes: string; no: string };
 
 export type TuiRequestResult = {
   status: 'running' | 'done' | 'error' | 'ask';

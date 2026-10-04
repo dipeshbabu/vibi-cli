@@ -138,14 +138,13 @@ export type SendOutcome = SyncOutcome & {
 
 export type Recipient = { email: string; publicKey: string; provisional: boolean; passphrase: string | null; registered: boolean };
 
-/**
- * Who to encrypt for. An address with a key is used as is. Otherwise a key
- * pair is generated here on their behalf, its private key wrapped with a
- * random passphrase, and both registered with the server; the sender passes
- * the passphrase on through another channel. The same pair is reused for
- * later sends to that address until they claim it.
- */
-export async function resolveRecipient(config: Config, rawEmail: string): Promise<Recipient> {
+/** A provisional key pair and passphrase chosen for an address, not yet registered with the server. */
+export type Provisional = { email: string; publicKey: string; privateKey: string; passphrase: string; reused: boolean };
+
+const drafts = new Map<string, Provisional>();
+
+/** The address's own key, or null when it has none (no account, or never enrolled: the server does not say which). */
+export async function lookupRecipient(config: Config, rawEmail: string): Promise<Recipient | null> {
   const email = rawEmail.trim().toLowerCase();
   try {
     const found = await request(config.serverUrl, `/api/client/users/lookup?email=${encodeURIComponent(email)}`, {
@@ -154,26 +153,81 @@ export async function resolveRecipient(config: Config, rawEmail: string): Promis
     });
     return { email: found.email, publicKey: found.publicKey, provisional: false, passphrase: null, registered: true };
   } catch (error) {
-    if (!(error instanceof ApiError && error.status === 404)) throw error;
+    if (error instanceof ApiError && error.status === 404) return null;
+    throw error;
   }
-  const state = readState();
-  const local = state.pending[email];
-  const pair = local ? { publicKey: local.publicKey, privateKey: local.privateKey } : generateKeyPair();
-  const passphrase = local?.passphrase ?? generatePassphrase();
-  const encryptedPrivateKey = wrapPrivateKey(pair, normalizePassphrase(passphrase), PASSPHRASE_SCRYPT_PARAMS);
+}
+
+/**
+ * The key pair and passphrase to use for an address without a key: the ones
+ * made earlier on this machine if any, otherwise fresh ones. Nothing is sent
+ * to the server, so the sender can see the passphrase and still change their
+ * mind; the same draft is returned until registerProvisional() uses it.
+ */
+export function draftProvisional(rawEmail: string): Provisional {
+  const email = rawEmail.trim().toLowerCase();
+  const cached = drafts.get(email);
+  if (cached) return cached;
+  const local = readState().pending[email];
+  const draft: Provisional = local
+    ? { email, publicKey: local.publicKey, privateKey: local.privateKey, passphrase: local.passphrase, reused: true }
+    : { email, ...generateKeyPair(), passphrase: generatePassphrase(), reused: false };
+  drafts.set(email, draft);
+  return draft;
+}
+
+/**
+ * Registers the provisional key with the server (which emails an invitation
+ * when the address has no account) and remembers it locally. If another of
+ * our machines registered one first, the server's key is used instead and
+ * the passphrase to pass on is the one shown by `vibi pending` there.
+ */
+export async function registerProvisional(config: Config, draft: Provisional): Promise<Recipient> {
+  const encryptedPrivateKey = wrapPrivateKey(draft, normalizePassphrase(draft.passphrase), PASSPHRASE_SCRYPT_PARAMS);
   const remote = await request(config.serverUrl, '/api/client/pending-recipients', {
     method: 'POST',
     token: config.deviceToken,
-    body: { email, publicKey: pair.publicKey, encryptedPrivateKey },
+    body: { email: draft.email, publicKey: draft.publicKey, encryptedPrivateKey },
     schema: pendingRecipientResponseSchema
   });
-  if (remote.publicKey === pair.publicKey) {
-    state.pending[email] = { id: remote.id, email, publicKey: pair.publicKey, privateKey: pair.privateKey, fingerprint: remote.fingerprint, passphrase, createdAt: local?.createdAt ?? new Date().toISOString() };
-    writeState(state);
-    return { email, publicKey: remote.publicKey, provisional: true, passphrase, registered: remote.registered };
+  drafts.delete(draft.email);
+  if (remote.publicKey !== draft.publicKey) {
+    return { email: draft.email, publicKey: remote.publicKey, provisional: true, passphrase: null, registered: remote.registered };
   }
-  // A provisional key for this address already exists, made on another of our machines: use it; its passphrase lives there.
-  return { email, publicKey: remote.publicKey, provisional: true, passphrase: null, registered: remote.registered };
+  const state = readState();
+  const previous = state.pending[draft.email];
+  state.pending[draft.email] = {
+    id: remote.id,
+    email: draft.email,
+    publicKey: draft.publicKey,
+    privateKey: draft.privateKey,
+    fingerprint: remote.fingerprint,
+    passphrase: draft.passphrase,
+    createdAt: previous?.createdAt ?? new Date().toISOString()
+  };
+  writeState(state);
+  return { email: draft.email, publicKey: draft.publicKey, provisional: true, passphrase: draft.passphrase, registered: remote.registered };
+}
+
+/** Who to encrypt for, without a confirmation step (scripts and callers that confirmed already). */
+export async function resolveRecipient(config: Config, rawEmail: string): Promise<Recipient> {
+  const found = await lookupRecipient(config, rawEmail);
+  if (found) return found;
+  return registerProvisional(config, draftProvisional(rawEmail));
+}
+
+/** What the sender must know before a provisional send, as plain lines (the TUI wraps them itself). */
+export function provisionalNotice(draft: Provisional): string[] {
+  return [
+    `${draft.email} has no encryption key on vibivibi yet (no account, or never enrolled).`,
+    'The session will be encrypted for a key made here on their behalf; they unlock it',
+    `once with this passphrase${draft.reused ? ', the same one as for the earlier session you sent them' : ''}:`,
+    '',
+    `    ${draft.passphrase}`,
+    '',
+    'Give it to them through another channel; it is never emailed. `vibi pending`',
+    'shows it again later.'
+  ];
 }
 
 /**
@@ -210,9 +264,9 @@ export async function sendSession(
   session: LocalSession,
   label: string | null | undefined,
   email: string,
-  opts: { onProgress?: ProgressReporter } = {}
+  opts: { onProgress?: ProgressReporter; recipient?: Recipient } = {}
 ): Promise<SendOutcome> {
-  const recipient = await resolveRecipient(config, email);
+  const recipient = opts.recipient ?? (await resolveRecipient(config, email));
   const extra = { provisional: recipient.provisional, passphrase: recipient.passphrase, registered: recipient.registered };
   const { trace, hash } = await readTrace(session, opts.onProgress);
   const state = readState();
@@ -258,15 +312,15 @@ export async function sendSession(
   return { ...result, recipient: recipient.email, reusedVersion: false, ...extra };
 }
 
-/** One line for the user after a send: where it went and, for a provisional key, the passphrase to pass on. */
+/** After a send: where it went and, for a provisional key, what the recipient still needs. */
 export function describeSend(r: SendOutcome, compact = false): string {
   const head = r.reusedVersion
     ? `Sent #${r.pullId} v${r.seq ?? '?'} to ${r.recipient}${compact ? ' (re-keyed, nothing re-uploaded)' : '; the stored copy was re-keyed, nothing re-uploaded.'}`
     : `Sent #${r.pullId} to ${r.recipient} as new version v${r.seq ?? '?'}${compact ? '' : '.'}`;
   if (!r.provisional) return head;
-  const who = r.registered ? 'They have an account but no key yet' : 'They have no account yet (an invitation was emailed)';
+  const who = r.registered ? 'They have an account but no key yet' : 'They have no account yet; an invitation was emailed';
   if (r.passphrase) {
-    return `${head}\n${who}. Give them this passphrase through another channel; vibi asks for it when they enroll:\n  ${r.passphrase}`;
+    return `${head}\n${who}. They unlock it with the passphrase shown above (\`vibi pending\` shows it again):\n  ${r.passphrase}`;
   }
-  return `${head}\n${who}. The copy is encrypted for the provisional key made on another of your machines; \`vibi pending\` there shows the passphrase, or \`vibi pending --reset ${r.recipient}\` makes a new one here.`;
+  return `${head}\n${who}. A provisional key for them already existed from another of your machines, so the passphrase that applies is the one \`vibi pending\` shows THERE, not one shown here; \`vibi pending --reset ${r.recipient}\` makes a new one on this machine.`;
 }

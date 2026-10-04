@@ -21,6 +21,7 @@ import { runTui, type TuiRemote } from '../tui';
 import { VERSION } from '../version';
 import { lineReporter, type ProgressReporter } from '../progress';
 import { claimPendingSessions } from '../claim';
+import { cmd, dim, heading, ok } from '../ui';
 
 function formatSize(bytes: number | null) {
   if (bytes === null) return '—';
@@ -201,6 +202,15 @@ async function pullTarget(config: Config, key: LocalUserKey, target: Target, opt
   }
 }
 
+/** The install report for the terminal: what happened, then how to resume, as a command to copy. */
+function formatPullMessage(message: string): string {
+  const [head, ...rest] = message.split('\n');
+  return [
+    ok(head),
+    ...rest.map((line) => (line.startsWith('Resume with: ') ? `  ${dim('Resume with:')} ${cmd(line.slice('Resume with: '.length))}` : `  ${dim(line)}`))
+  ].join('\n');
+}
+
 /** Entries for the pull picker: own sessions and shares, newest first, titles decrypted locally. */
 async function remoteEntries(config: Config, key: LocalUserKey | null, into: string): Promise<{ entries: TuiRemote[]; details: Map<string, SessionDetail> }> {
   const { sessions, shared } = await fetchList(config);
@@ -316,6 +326,17 @@ export async function pull(
         else printList(list.sessions, list.shared, key);
         return;
       }
+      // Sessions sent before this account had a key cannot be opened from the
+      // picker: unlock them with the senders' passphrases here first, so the
+      // picker then shows them like any other.
+      if (key) {
+        const list = await fetchList(config);
+        if (list.shared.some((s) => s.needsPassphrase)) {
+          console.log(heading('Sessions waiting for a passphrase'));
+          await claimPendingSessions(config, key, { interactive: Boolean(process.stdin.isTTY) || process.env.VIBI_PASSPHRASE !== undefined });
+          console.log('');
+        }
+      }
       const { entries } = await remoteEntries(config, key, into);
       await runTui({
         state: {
@@ -362,7 +383,7 @@ export async function pull(
         if (claimed.claimed === 0) fail(`#${error.pullId} is still waiting for the passphrase from ${error.fromEmail}.`);
         target = await resolveTarget(config, id, opts.rev);
       }
-      console.log(await pullTarget(config, key, target, { into: opts.into, out: opts.out, overwrite: opts.overwrite }, progress).finally(() => progress.finish()));
+      console.log(formatPullMessage(await pullTarget(config, key, target, { into: opts.into, out: opts.out, overwrite: opts.overwrite }, progress).finally(() => progress.finish())));
     } catch (error) {
       if (error instanceof InstallConflict) fail(error.message);
       if (error instanceof Error && !(error instanceof ApiError)) fail(error.message);

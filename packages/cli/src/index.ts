@@ -47,6 +47,7 @@ program
   .option('--json', 'print them as JSON and exit')
   .option('--all', 'consider sessions from every directory, not just this one')
   .option('--force', 'upload even if this machine believes the session is already stored')
+  .option('--yes', 'with --send: do not stop to confirm that the passphrase for a new recipient was saved')
   .option('--max <count>', 'newest sessions to scan', '500')
   .action(push);
 

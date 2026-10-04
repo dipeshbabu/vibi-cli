@@ -4,6 +4,7 @@ import { WrongPasswordError, unwrapPrivateKey, wrapPrivateKey } from '@vibivibi/
 import { ApiError, request } from './api';
 import { readUserKey, writeUserKey, type Config, type LocalUserKey } from './config';
 import { promptHidden, promptNewPassword, promptYesNo } from './password';
+import { bold, dim, heading, ok } from './ui';
 
 /** The user's key as the server holds it, or null if none has been created yet. */
 export async function fetchUserKey(config: Config): Promise<UserKey | null> {
@@ -39,9 +40,10 @@ function localFrom(remote: Pick<UserKey, 'publicKey' | 'fingerprint' | 'createdA
 
 /** First machine: generate the pair, wrap the private key, register both. */
 export async function createUserKey(config: Config, opts: { remember?: boolean }): Promise<LocalUserKey> {
-  console.log(
-    'No encryption key exists for your account yet. It is created here, and the private key is stored on the server only after being encrypted with a password that never leaves your machines.'
-  );
+  console.log(heading('Create your encryption key'));
+  console.log(dim('No encryption key exists for your account yet. It is created here, and the private key is stored on the'));
+  console.log(dim('server only after being encrypted with a password that never leaves your machines.'));
+  console.log(dim('There is no way to recover that password. Keep it somewhere safe.'));
   const password = await promptNewPassword();
   const pair = generateKeyPair();
   const encryptedPrivateKey = wrapPrivateKey(pair, password);
@@ -51,11 +53,11 @@ export async function createUserKey(config: Config, opts: { remember?: boolean }
     body: { publicKey: pair.publicKey, encryptedPrivateKey },
     schema: userKeySchema
   });
-  console.log(`Encryption key created (fingerprint ${remote.fingerprint}). Keep the password safe: there is no way to recover it.`);
+  console.log(ok(`Encryption key created (fingerprint ${bold(remote.fingerprint)}).`));
   const remember = await askRemember(opts.remember);
   const local = localFrom(remote, remember ? pair.privateKey : null);
   writeUserKey(local);
-  console.log(remember ? 'The unlocked key is kept on this machine (`vibi lock` forgets it).' : 'The private key is not kept on this machine; commands that need it will ask for the password.');
+  console.log(remember ? ok('The unlocked key is kept on this machine (`vibi lock` forgets it).') : dim('The private key is not kept on this machine; commands that need it will ask for the password.'));
   return local;
 }
 
@@ -120,9 +122,9 @@ export async function ensureUserKey(config: Config, opts: { unlock: boolean; rem
   const remember = await askRemember(opts.remember);
   if (remember) {
     writeUserKey(unlocked);
-    console.log('The unlocked key is kept on this machine (`vibi lock` forgets it).');
+    console.log(ok('The unlocked key is kept on this machine (`vibi lock` forgets it).'));
   } else {
-    console.log('The private key is not kept on this machine; commands that need it will ask for the password.');
+    console.log(dim('The private key is not kept on this machine; commands that need it will ask for the password.'));
   }
   return remember ? unlocked : local;
 }

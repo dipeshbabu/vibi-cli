@@ -238,25 +238,31 @@ func ellipsize(value string, width int) string {
 	return string(runes[:width-1]) + "…"
 }
 
+// wrapText wraps prose at width columns; explicit newlines are kept, so a
+// message can set a passphrase or a command apart on its own line.
 func wrapText(value string, width int) string {
 	if width <= 0 {
 		return value
 	}
-	words := strings.Fields(value)
-	if len(words) == 0 {
-		return ""
-	}
-	var lines []string
-	line := words[0]
-	for _, word := range words[1:] {
-		if utf8.RuneCountInString(line)+1+utf8.RuneCountInString(word) <= width {
-			line += " " + word
+	var out []string
+	for _, paragraph := range strings.Split(value, "\n") {
+		words := strings.Fields(paragraph)
+		if len(words) == 0 {
+			out = append(out, "")
 			continue
 		}
-		lines = append(lines, line)
-		line = word
+		line := words[0]
+		for _, word := range words[1:] {
+			if utf8.RuneCountInString(line)+1+utf8.RuneCountInString(word) <= width {
+				line += " " + word
+				continue
+			}
+			out = append(out, line)
+			line = word
+		}
+		out = append(out, line)
 	}
-	return strings.Join(append(lines, line), "\n")
+	return strings.Join(out, "\n")
 }
 
 func sessionWhen(value string) string {
@@ -379,6 +385,9 @@ func (m model) confirmYes() (model, tea.Cmd) {
 	busy := m.confirm.Yes
 	if request.Action == "invite" {
 		busy = "Inviting " + request.Email
+	}
+	if request.Action == "send-confirmed" {
+		busy = "Sending to " + request.Email
 	}
 	return m.dispatch(request, busy)
 }
@@ -988,7 +997,7 @@ func (m model) renderInput(title, description, value string, cursor int, placeho
 	width := min(max(44, m.width-8), 80)
 	heading := style(brandOrange).Bold(true).Render("✻  " + title)
 	copy := style(mutedColor).Render(wrapText(description, width-4))
-	field := lipgloss.NewStyle().Foreground(lipgloss.Color(textColor)).Border(lipgloss.NormalBorder(), false, false, true, false).BorderForeground(lipgloss.Color(faintColor)).Width(width-4).Render(renderEditableValue(value, cursor, width-5, placeholder))
+	field := lipgloss.NewStyle().Foreground(lipgloss.Color(textColor)).Border(lipgloss.NormalBorder(), false, false, true, false).BorderForeground(lipgloss.Color(faintColor)).Width(width - 4).Render(renderEditableValue(value, cursor, width-5, placeholder))
 	body := heading + "\n" + copy + "\n\n" + field
 	if m.inputError != "" {
 		body += "\n" + style(redColor).Render(m.inputError)

@@ -6,6 +6,7 @@ import { claimResponseSchema, listPendingClaimsResponseSchema, type PendingClaim
 import { request } from './api';
 import type { Config } from './config';
 import { promptHidden } from './password';
+import { cmd, dim, heading, ok } from './ui';
 
 export type ClaimSummary = { claimed: number; skipped: number; pulled: { pullId: string; from: string; label: string | null }[] };
 
@@ -31,7 +32,8 @@ export async function claimPendingSessions(
   for (const p of list) {
     const n = p.shares.length;
     if (!opts.quiet) {
-      console.log(`${p.fromEmail} sent you ${n === 1 ? 'a session' : `${n} sessions`} before you had a key; ${n === 1 ? 'it is' : 'they are'} encrypted for a passphrase they gave you.`);
+      console.log(heading(`${p.fromEmail} sent you ${n === 1 ? 'a session' : `${n} sessions`} before you had a key`));
+      console.log(dim(`${n === 1 ? 'It is' : 'They are'} encrypted for the passphrase they gave you. Enter it once here; press enter to skip for now.`));
     }
     const pair = await unlockProvisional(p, opts.interactive);
     if (!pair) {
@@ -53,8 +55,9 @@ export async function claimPendingSessions(
     summary.claimed += result.claimed;
     for (const share of p.shares) summary.pulled.push({ pullId: share.pullId, from: p.fromEmail, label: share.label });
     if (!opts.quiet) {
-      console.log(`Claimed ${result.claimed === 1 ? 'the session' : `${result.claimed} sessions`} from ${p.fromEmail}; ${result.claimed === 1 ? 'it is' : 'they are'} now encrypted for your own key.`);
-      for (const share of p.shares) console.log(`  vibi pull ${share.pullId}${share.label ? `   # ${share.label}` : ''}`);
+      console.log(ok(`Claimed ${result.claimed === 1 ? 'the session' : `${result.claimed} sessions`} from ${p.fromEmail}; ${result.claimed === 1 ? 'it is' : 'they are'} now encrypted for your own key.`));
+      console.log(dim(`To install ${result.claimed === 1 ? 'it' : 'them'}, go to the project directory ${result.claimed === 1 ? 'it belongs' : 'they belong'} to and run:`));
+      for (const share of p.shares) console.log(`  ${cmd(`vibi pull ${share.pullId}`)}${share.label ? dim(`   # ${share.label}`) : ''}`);
     }
   }
   return summary;

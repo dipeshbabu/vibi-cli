@@ -5,6 +5,7 @@ import { fail } from '../log';
 import { describeThisMachine } from '../machine';
 import { ensureUserKey } from '../userkey';
 import { claimPendingSessions } from '../claim';
+import { commands, dim, heading, ok } from '../ui';
 
 export async function enroll(
   code: string,
@@ -45,16 +46,25 @@ export async function enroll(
       enrolledAt: result.serverTime
     };
     writeConfig(config);
-    console.log(`Enrolled as "${result.name}" (machine #${result.machineId}) at ${serverUrl}.`);
+    console.log(ok(`Enrolled as "${result.name}" (machine #${result.machineId}) at ${serverUrl}.`));
 
     const key = await ensureUserKey(config, { unlock: opts.unlock !== false, remember: opts.remember });
     // Sessions people sent this address before it had a key: claim them now with their passphrases.
+    let claimed = 0;
     try {
-      await claimPendingSessions(config, key, { interactive: Boolean(process.stdin.isTTY) || process.env.VIBI_PASSPHRASE !== undefined });
+      claimed = (await claimPendingSessions(config, key, { interactive: Boolean(process.stdin.isTTY) || process.env.VIBI_PASSPHRASE !== undefined })).claimed;
     } catch (error) {
       console.error(`Could not check for sessions waiting on a passphrase: ${error instanceof Error ? error.message : String(error)}`);
     }
-    console.log('Run `vibi push` in a project directory to store or send a session, and `vibi pull` to fetch sessions from your other machines.');
+    console.log(heading('Next'));
+    if (claimed > 0) console.log(dim('The commands above install what you were sent; run them inside the project directory.'));
+    console.log(
+      commands([
+        ['vibi push', 'in a project directory: store a session, or send it to someone'],
+        ['vibi pull', 'fetch a session stored for you, or one someone sent you'],
+        ['vibi status', 'what this machine is enrolled as']
+      ])
+    );
   } catch (error) {
     if (error instanceof ApiError) fail(error.message);
     throw error;
