@@ -1,31 +1,47 @@
 {
   "name": "vibi",
   "version": "0.1.0",
-  "description": "vibi: the vibivibi machine client. Enrolls this machine, keeps its private key local, and uploads encrypted coding-agent sessions.",
-  "private": true,
+  "description": "vibi: the vibivibi client. Enrolls this machine, keeps your private key local, and pushes, sends and pulls end-to-end encrypted coding-agent sessions.",
+  "license": "Apache-2.0",
+  "homepage": "https://vibivibi.com",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/subconscious-systems/vibi-cli.git",
+    "directory": "packages/cli"
+  },
   "type": "module",
   "bin": {
     "vibi": "./bin/vibi.mjs"
   },
+  "files": [
+    "bin/vibi.mjs",
+    "bin/native/",
+    "dist/vibi.mjs",
+    "README.md"
+  ],
   "scripts": {
     "dev": "tsx src/index.ts",
     "typecheck": "tsc --noEmit",
     "build:tui": "node scripts/build-tui.mjs",
     "build:tui:host": "node scripts/build-tui.mjs --host",
-    "prepack": "node scripts/build-tui.mjs"
-  },
-  "dependencies": {
-    "@vibivibi/shared": "workspace:*",
-    "@vercel/blob": "2.8.0",
-    "commander": "^15.0.0",
-    "tsx": "^4.23.15",
-    "zod": "^3.24.4"
+    "build": "node scripts/build-cli.mjs",
+    "build:host": "node scripts/build-cli.mjs --host",
+    "build:npm": "node scripts/build-cli.mjs --npm-only",
+    "prepack": "node scripts/build-tui.mjs && node scripts/build-cli.mjs --npm-only"
   },
   "devDependencies": {
     "@types/node": "^22.15.18",
-    "typescript": "^5.8.3"
+    "@vercel/blob": "2.8.0",
+    "@vibivibi/shared": "workspace:*",
+    "commander": "^15.0.0",
+    "tsx": "^4.23.15",
+    "typescript": "^5.8.3",
+    "zod": "^3.24.4"
   },
   "engines": {
     "node": ">=20.6"
+  },
+  "bugs": {
+    "url": "https://github.com/subconscious-systems/vibi-cli/issues"
   }
 }

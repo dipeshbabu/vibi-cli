@@ -1,10 +1,13 @@
 import { spawn } from 'node:child_process';
-import { mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { configDir } from './config';
 import type { Progress, ProgressReporter } from './progress';
+import { embeddedTuiPath } from './runtime';
+import { VERSION } from './version';
 
 /**
  * Launcher for the Go TUI (tui/cmd/vibi-tui), ported from subconscious-cli.
@@ -104,6 +107,8 @@ export async function resolveTuiExecutable(): Promise<{ command: string; args: s
   const override = process.env.VIBI_TUI_BIN?.trim();
   if (override) return { command: override, args: [] };
   const target = nativeTargetName();
+  const embedded = embeddedTuiPath();
+  if (embedded && target) return { command: await extractEmbeddedTui(embedded, target), args: [] };
   if (target) {
     const packaged = path.join(NATIVE_DIR, target);
     if (existsSync(packaged)) return { command: packaged, args: [] };
@@ -113,6 +118,32 @@ export async function resolveTuiExecutable(): Promise<{ command: string; args: s
     return { command: 'go', args: ['run', './cmd/vibi-tui'], cwd: TUI_SOURCE_DIR };
   }
   return null;
+}
+
+/**
+ * The standalone binary carries the TUI inside it (read-only, not executable
+ * from there), so it is written out once per vibi version under ~/.vibi/bin
+ * and older copies are removed.
+ */
+async function extractEmbeddedTui(embedded: string, target: string): Promise<string> {
+  const dir = path.join(configDir(), 'bin');
+  const name = target.replace(/(\.exe)?$/, `-${VERSION}$1`);
+  const dest = path.join(dir, name);
+  const bytes = await readFile(embedded);
+  try {
+    if ((await stat(dest)).size === bytes.length) return dest;
+  } catch {
+    // not extracted yet
+  }
+  await mkdir(dir, { recursive: true, mode: 0o700 });
+  const tmp = `${dest}.${process.pid}.tmp`;
+  await writeFile(tmp, bytes, { mode: 0o755 });
+  await rename(tmp, dest);
+  const prefix = target.replace(/\.exe$/, '');
+  for (const entry of await readdir(dir).catch(() => [] as string[])) {
+    if (entry !== name && entry.startsWith(`${prefix}-`)) await unlink(path.join(dir, entry)).catch(() => {});
+  }
+  return dest;
 }
 
 export async function writeAtomicJson(file: string, value: unknown) {

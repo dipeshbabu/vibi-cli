@@ -1,7 +1,14 @@
 #!/usr/bin/env node
-// Runs the TypeScript sources directly through tsx, so the workspace needs no
-// build step. A bundled build replaces this file before publishing to npm.
-import { register } from 'tsx/esm/api';
+// Published package: runs the bundle in dist/. Workspace checkout: runs the
+// TypeScript sources through tsx, so development needs no build step.
+import { existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
-register();
-await import('../src/index.ts');
+const bundle = new URL('../dist/vibi.mjs', import.meta.url);
+if (existsSync(fileURLToPath(bundle))) {
+  await import(bundle.href);
+} else {
+  const { register } = await import('tsx/esm/api');
+  register();
+  await import('../src/index.ts');
+}

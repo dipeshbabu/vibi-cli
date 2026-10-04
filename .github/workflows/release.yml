@@ -1,0 +1,73 @@
+# Builds vibi for every platform and attaches the executables to a GitHub
+# release, which is where https://vibivibi.com/install.sh downloads from.
+#
+#   git tag v0.1.0 && git push origin v0.1.0
+#
+# The tag must match packages/cli/package.json's version. Set the repository
+# variable PUBLISH_NPM=true and the secret NPM_TOKEN to publish to npm as well.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: packages/cli/tui/go.mod
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: pnpm install --frozen-lockfile
+      - name: Check that the tag matches the package version
+        run: |
+          version="$(node -p "require('./packages/cli/package.json').version")"
+          [ "v$version" = "${GITHUB_REF_NAME}" ] || { echo "tag ${GITHUB_REF_NAME} but package.json says $version"; exit 1; }
+      - name: Build the picker for every platform
+        run: pnpm --filter vibi build:tui
+      - name: Build the executables and the npm bundle
+        run: pnpm --filter vibi build
+      - name: Attach the executables to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            packages/cli/dist/release/*.tar.gz
+            packages/cli/dist/release/*.zip
+            packages/cli/dist/release/checksums.txt
+          generate_release_notes: true
+
+  npm:
+    needs: build
+    if: vars.PUBLISH_NPM == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: packages/cli/tui/go.mod
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: pnpm install --frozen-lockfile
+      - name: Publish vibi (prepack builds the picker and the bundle)
+        run: pnpm --filter vibi publish --access public --no-git-checks
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

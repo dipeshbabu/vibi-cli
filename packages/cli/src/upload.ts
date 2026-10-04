@@ -23,17 +23,20 @@ export class TraceTooLargeError extends Error {
   }
 }
 
-async function sendCiphertext(config: Config, instruction: UploadInstruction, ciphertext: Buffer, onProgress?: ProgressReporter) {
+async function sendCiphertext(config: Config, instruction: UploadInstruction, ciphertext: Buffer, versionId: number, onProgress?: ProgressReporter) {
   const report = (loaded: number, total: number) => onProgress?.({ phase: 'uploading', loaded, total });
   report(0, ciphertext.length);
   if (instruction.transport === 'direct') {
     await putBytes(new URL(instruction.url, config.serverUrl), ciphertext, config.deviceToken, report);
     return undefined;
   }
+  // The server issues the upload token only for the version this machine
+  // just registered; the pathname embeds the id, the payload names it too.
   const result = await upload(instruction.pathname, ciphertext, {
     access: instruction.access,
     handleUploadUrl: new URL(instruction.handleUploadUrl, config.serverUrl).toString(),
     headers: { authorization: `Bearer ${config.deviceToken}` },
+    clientPayload: JSON.stringify({ versionId }),
     contentType: 'application/octet-stream',
     multipart: instruction.multipart,
     onUploadProgress: ({ loaded, total }) => report(loaded, total)
@@ -104,7 +107,7 @@ export async function uploadVersion(config: Config, key: LocalUserKey, input: Up
 
   let seq = registered.seq;
   if (registered.upload) {
-    const blobUrl = await sendCiphertext(config, registered.upload, ciphertext, onProgress);
+    const blobUrl = await sendCiphertext(config, registered.upload, ciphertext, registered.versionId, onProgress);
     onProgress?.({ phase: 'verifying' });
     const completed = await request(config.serverUrl, `/api/client/session-versions/${registered.versionId}/complete`, {
       method: 'POST',

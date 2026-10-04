@@ -7,6 +7,7 @@ import { pending } from './commands/pending';
 import { changePassword, lock, unlock } from './commands/key';
 import { sessions } from './commands/sessions';
 import { status } from './commands/status';
+import { upgrade } from './commands/upgrade';
 import { VERSION } from './version';
 
 const program = new Command();
@@ -22,7 +23,7 @@ program
   .command('enroll')
   .description('Register this machine using a code from the dashboard')
   .argument('<code>', 'enrollment code shown in the dashboard')
-  .option('--server <url>', 'vibivibi server URL (default: $VIBI_SERVER_URL or http://localhost:3000)')
+  .option('--server <url>', 'vibivibi server URL (default: $VIBI_SERVER_URL or https://vibivibi.com)')
   .option('--name <name>', 'display name for this machine (default: hostname)')
   .option('--force', 'enroll again even if this machine already has a config')
   .option('--no-unlock', 'do not ask for the encryption password now (uploads still work)')
@@ -96,6 +97,11 @@ program
   .command('change-password')
   .description('Re-encrypt your private key with a new encryption password')
   .action(changePassword);
+
+program
+  .command('upgrade')
+  .description('Install the latest release of vibi over this one')
+  .action(upgrade);
 
 program.parseAsync(process.argv).catch((error: unknown) => {
   console.error(`vibi: ${error instanceof Error ? error.message : String(error)}`);

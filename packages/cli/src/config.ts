@@ -25,8 +25,9 @@ import { z } from 'zod';
  * Override the location with VIBI_HOME (used by tests).
  */
 
-export const DEFAULT_SERVER_URL =
-  process.env.VIBI_SERVER_URL ?? 'http://localhost:3000';
+/** The hosted service. `vibi enroll --server` or VIBI_SERVER_URL point a machine elsewhere (self-hosted, development). */
+export const PRODUCTION_SERVER_URL = 'https://vibivibi.com';
+export const DEFAULT_SERVER_URL = process.env.VIBI_SERVER_URL ?? PRODUCTION_SERVER_URL;
 
 export function configDir(): string {
   return process.env.VIBI_HOME ?? join(homedir(), '.vibi');

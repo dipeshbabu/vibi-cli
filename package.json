@@ -1,0 +1,17 @@
+{
+  "name": "vibi-cli",
+  "private": true,
+  "description": "Workspace for the vibi client and the shared crypto and API schemas it uses. Published as the npm package `vibi` and as standalone executables.",
+  "packageManager": "pnpm@12.8.1",
+  "scripts": {
+    "typecheck": "pnpm -r typecheck",
+    "test": "tsx --test packages/shared/test/*.test.ts packages/cli/test/*.test.ts",
+    "build:npm": "pnpm --filter vibi build:npm",
+    "build:host": "pnpm --filter vibi build:tui:host && pnpm --filter vibi build:host",
+    "build": "pnpm --filter vibi build:tui && pnpm --filter vibi build"
+  },
+  "devDependencies": {
+    "tsx": "^4.23.15",
+    "typescript": "^5.8.3"
+  }
+}

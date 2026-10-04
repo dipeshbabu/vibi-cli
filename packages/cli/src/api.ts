@@ -18,7 +18,8 @@ type RequestOptions<T> = {
   method?: 'GET' | 'POST' | 'PUT' | 'PATCH';
   body?: unknown;
   token?: string;
-  schema: z.ZodType<T>;
+  /** Output type drives T; schemas with defaults have a different input type. */
+  schema: z.ZodType<T, z.ZodTypeDef, unknown>;
 };
 
 /** JSON request against the vibivibi server, validated with a shared schema. */

@@ -42,7 +42,7 @@ function deriveKey(password: string, salt: Buffer, params: EncryptedPrivateKey['
 const aadFor = (publicKey: string) => Buffer.from(`vibi/v1/userkey:${publicKeyFingerprint(publicKey)}`);
 
 export function wrapPrivateKey(
-  pair: KeyPair,
+  pair: Pick<KeyPair, 'publicKey' | 'privateKey'>,
   password: string,
   params: EncryptedPrivateKey['params'] = SCRYPT_PARAMS
 ): EncryptedPrivateKey {

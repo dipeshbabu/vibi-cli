@@ -1,0 +1,6 @@
+node_modules/
+packages/cli/dist/
+packages/cli/bin/native/
+*.bun-build
+*.tsbuildinfo
+.DS_Store
