@@ -28,3 +28,20 @@ jobs:
       - run: pnpm test
       - name: Bundle for npm and smoke it
         run: pnpm build:npm && node packages/cli/dist/vibi.mjs --version && node packages/cli/dist/vibi.mjs --help
+
+  windows-host-build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: packages/cli/tui/go.mod
+      - uses: oven-sh/setup-bun@v2
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build:host
+      - run: packages/cli/dist/bin/windows-x64/vibi.exe --version
