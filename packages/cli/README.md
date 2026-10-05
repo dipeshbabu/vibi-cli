@@ -1,6 +1,6 @@
 # vibi
 
-The command-line client for [vibivibi](https://vibivibi.com): end-to-end encrypted storage and sharing of coding-agent sessions (Claude Code, Codex CLI, OpenCode, Pi).
+The command-line client for [vibivibi](https://vibivibi.com): encrypted backup, sync and sharing of coding agent sessions (Claude Code, Codex CLI, OpenCode, Pi) between your machines and your teammates.
 
 Sessions are encrypted on your machine with keys only you and your recipients hold. The service stores ciphertext it cannot read.
 
