@@ -176,7 +176,7 @@ async function pullTarget(config: Config, key: LocalUserKey, target: Target, opt
     onProgress?.({ phase: 'done' });
     return `Wrote ${content.length} bytes of plaintext (${target.description}) to ${opts.out}.`;
   }
-  const { file, existed } = installTrace({
+  const { file, existed, imported, importError } = installTrace({
     harness: target.harness,
     harnessSessionId: target.harnessSessionId,
     harnessUpdatedAt: target.harnessUpdatedAt,
@@ -198,7 +198,10 @@ async function pullTarget(config: Config, key: LocalUserKey, target: Target, opt
     case 'sc':
       return `${where}\nResume with: marathon --resume ${file}`;
     default:
-      return `${where}\nOpenCode stores sessions in its own database; this is a JSON export of the messages.`;
+      if (imported) {
+        return `${where}\nImported into OpenCode.\nResume with: ${metadata.cwd ? `cd ${metadata.cwd} && ` : ''}opencode --session ${target.harnessSessionId}`;
+      }
+      return `${where}\nNot imported into OpenCode: ${importError ?? 'unknown reason'}. The file is OpenCode's export format; \`opencode import <file>\` loads it once OpenCode is available.`;
   }
 }
 

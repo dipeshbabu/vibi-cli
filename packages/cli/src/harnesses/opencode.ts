@@ -1,8 +1,11 @@
 import { cleanText, makeSession } from './jsonl';
 import type { DiscoverContext, HarnessAdapter, LocalSession } from './types';
 
-// OpenCode keeps sessions in SQLite; `opencode db --format json "<sql>"` reads them.
-// The uploaded trace is a JSON export {session, messages}, not the database.
+// OpenCode keeps sessions in SQLite. Discovery reads it with
+// `opencode db --format json "<sql>"`; the uploaded trace is OpenCode's own
+// `opencode export <id>` document ({info, messages}), which `opencode import`
+// restores on another machine (install.ts). Older OpenCode without export
+// falls back to a {harness, session, messages} summary that cannot be imported.
 
 function run(execute: DiscoverContext['execute'], query: string): string {
   const result = execute('opencode', ['db', '--format', 'json', query], {
@@ -70,6 +73,27 @@ function sessionMessages(execute: DiscoverContext['execute'], id: string) {
   }
 }
 
+type NativeExport = { info?: { id?: string; time?: { created?: number } }; messages?: { info?: { role?: string } }[] };
+
+/** `opencode export <id>`: the document `opencode import` accepts, or null when this OpenCode cannot export. */
+function exportSession(execute: DiscoverContext['execute'], id: string): { bytes: Buffer; doc: NativeExport } | null {
+  const result = execute('opencode', ['export', id], {
+    encoding: 'utf8',
+    timeout: 20_000,
+    env: { ...process.env, NO_COLOR: '1' },
+    maxBuffer: 64 * 1024 * 1024
+  });
+  if (result.error || result.status !== 0) return null;
+  const text = String(result.stdout || '').trim();
+  try {
+    const doc = JSON.parse(text) as NativeExport;
+    if (doc?.info?.id !== id || !Array.isArray(doc.messages)) return null;
+    return { bytes: Buffer.from(text, 'utf8'), doc };
+  } catch {
+    return null;
+  }
+}
+
 export const opencodeAdapter: HarnessAdapter = {
   harness: 'opencode',
   async discover({ execute, max }) {
@@ -87,6 +111,16 @@ export const opencodeAdapter: HarnessAdapter = {
       .filter((s): s is LocalSession => s !== null);
   },
   async readTrace(session, { execute }) {
+    const native = exportSession(execute, session.id);
+    if (native) {
+      const messages = native.doc.messages ?? [];
+      const created = native.doc.info?.time?.created;
+      return {
+        bytes: native.bytes,
+        messageCount: messages.filter((m) => ['user', 'assistant'].includes(m.info?.role ?? '')).length,
+        startedAt: typeof created === 'number' ? new Date(created).toISOString() : null
+      };
+    }
     const [row] = listSessions(execute, 500).filter((r) => r.id === session.id);
     const messages = sessionMessages(execute, session.id);
     const bytes = Buffer.from(

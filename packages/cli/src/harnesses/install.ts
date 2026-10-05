@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type { Harness, TraceMetadata } from '@vibivibi/shared/sessions';
@@ -11,7 +12,8 @@ import { configDir } from '../config';
  *   codex    ~/.codex/sessions/YYYY/MM/DD/<original file name>      (`codex resume <id>`)
  *   pi       ~/.pi/agent/sessions/<original file name>              (`pi --session <file>`)
  *   sc       ~/.sc/sessions/<original file name>                    (`marathon --resume <file>`)
- *   opencode ~/.vibi/downloads/opencode-<id>.json  (export only; OpenCode keeps sessions in SQLite)
+ *   opencode ~/.vibi/downloads/opencode-<id>.json, then `opencode import <file>` puts it in
+ *            OpenCode's database                                  (`opencode --session <id>`)
  */
 
 export type InstallTarget = {
@@ -78,16 +80,47 @@ export function installPathFor(t: Omit<InstallTarget, 'content' | 'overwrite'>):
   }
 }
 
+export type InstallResult = {
+  file: string;
+  existed: boolean;
+  /** OpenCode: the session was handed to `opencode import` and can be resumed; otherwise the file is all there is. */
+  imported: boolean;
+  /** Why the import did not happen, for the message to the user. */
+  importError?: string;
+};
+
 /** Writes the plaintext trace where the harness expects it; returns the path. */
-export function installTrace(t: InstallTarget): { file: string; existed: boolean } {
+export function installTrace(t: InstallTarget): InstallResult {
   const file = installPathFor(t);
   const existed = existsSync(file);
   if (existed && !t.overwrite) {
     const current = readFileSync(file);
-    if (current.equals(t.content)) return { file, existed };
-    throw new InstallConflict(file);
+    if (!current.equals(t.content)) throw new InstallConflict(file);
+  } else {
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(file, t.content, { mode: 0o600 });
   }
-  mkdirSync(path.dirname(file), { recursive: true });
-  writeFileSync(file, t.content, { mode: 0o600 });
-  return { file, existed };
+  if (t.harness !== 'opencode') return { file, existed, imported: false };
+  return { file, existed, ...importIntoOpenCode(file, t.content) };
+}
+
+/**
+ * OpenCode has no session files to drop in place; its own `opencode import`
+ * loads an `opencode export` document into the database (same id, idempotent).
+ * Older uploads were summaries, which OpenCode cannot import.
+ */
+function importIntoOpenCode(file: string, content: Buffer): { imported: boolean; importError?: string } {
+  let doc: { info?: { id?: unknown }; messages?: unknown };
+  try {
+    doc = JSON.parse(content.toString('utf8'));
+  } catch {
+    return { imported: false, importError: 'the file is not JSON' };
+  }
+  if (typeof doc?.info?.id !== 'string' || !Array.isArray(doc.messages)) {
+    return { imported: false, importError: 'this version was uploaded as a summary, which OpenCode cannot import; push it again from the original machine' };
+  }
+  const result = spawnSync('opencode', ['import', file], { encoding: 'utf8', timeout: 60_000, env: { ...process.env, NO_COLOR: '1' } });
+  if (result.error) return { imported: false, importError: `opencode is not installed here (${result.error.message})` };
+  if (result.status !== 0) return { imported: false, importError: `opencode import failed: ${(result.stderr || result.stdout || '').trim().split('\n').pop() ?? ''}` };
+  return { imported: true };
 }
